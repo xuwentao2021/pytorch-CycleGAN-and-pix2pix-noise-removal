@@ -27,8 +27,8 @@ class UnalignedFlagDataset(BaseDataset):
         self.dir_A = os.path.join(opt.dataroot, opt.phase + 'A')  # create a path '/path/to/data/trainA'
         self.dir_B = os.path.join(opt.dataroot, opt.phase + 'B')  # create a path '/path/to/data/trainB'
 
-        self.A_paths = sorted(make_dataset(self.dir_A, opt.max_dataset_size, use_flag=False))   # load (images, flags) from '/path/to/data/trainA'
-        self.B_paths = sorted(make_dataset(self.dir_B, opt.max_dataset_size, use_flag=True))   # load (images, flags) '/path/to/data/trainB'
+        self.A_paths = sorted(make_dataset(self.dir_A, opt.max_dataset_size, use_flag=True))   # load (images, flags) from '/path/to/data/trainA', this is noisy dataset
+        self.B_paths = sorted(make_dataset(self.dir_B, opt.max_dataset_size, use_flag=False))   # load (images) '/path/to/data/trainB', this is clean dataset
         self.A_size = len(self.A_paths)  # get the size of dataset A
         self.B_size = len(self.B_paths)  # get the size of dataset B
         btoA = self.opt.direction == 'BtoA'
@@ -55,12 +55,12 @@ class UnalignedFlagDataset(BaseDataset):
         else:   # randomize the index for domain B to avoid fixed pairs.
             index_B = random.randint(0, self.B_size - 1)
         B_path = self.B_paths[index_B]
-        A_img = Image.open(A_path).convert('RGB')
-        B_img = Image.open(B_path[0]).convert('RGB')
+        A_img = Image.open(A_path[0]).convert('RGB')
+        B_img = Image.open(B_path).convert('RGB')
 
-        B_flag_dict = self.get_flag_from_file(B_path[1])
-        B_flag = self.dict2tensor(B_flag_dict)
-        A_flag = zeros_like(B_flag) # A represents clean images without any noisy type
+        A_flag_dict = self.get_flag_from_file(A_path[1])
+        A_flag = self.dict2tensor(A_flag_dict)
+        B_flag = zeros_like(A_flag) # A represents clean images without any noisy type
         # apply image transformation
         A = self.transform_A(A_img)
         B = self.transform_B(B_img)

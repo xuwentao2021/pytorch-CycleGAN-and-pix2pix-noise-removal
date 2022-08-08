@@ -131,12 +131,12 @@ class MoECycleGANModel(BaseModel):
         self.real_B = input['B' if AtoB else 'A'].to(self.device)
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
         # self.flag_A = input['A_flags'].to(self.device)
-        self.real_C = self.flag_B = input['B_flags'].to(self.device)
+        self.real_C = self.flag_A = input['A_flags'].to(self.device)
 
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
-        self.emb_B = self.netEmb(self.real_B)
+        self.emb_B = self.netEmb(self.real_A) # classify noisy type
         self.pred_C = self.netC(self.emb_B)
 
         self.fake_B = self.netG_A(self.real_A, self.emb_B)  # G_A(A)
