@@ -843,19 +843,22 @@ class GatingResnetBlockGenerator(nn.Module):
 
         self.initial_layers = nn.Sequential(*initial_layers)
         self.last_layers = nn.Sequential(*last_layers)
-        self.register_buffer('gating_weights_sum', torch.tensor(0, dtype=torch.float))
 
     # def get_gating_weights(self):
     #     return self.gating_weights
 
-    def forward(self, input, embedding):
+    def forward(self, input, embedding, require_gate = True):
         """Standard forward"""
 
         self.gating_weights = []
+        if require_gate:
+            gating_weights_sum = 0
         for gating_network in self.gating_networks:
             gating_weight = gating_network(embedding)
             self.gating_weights.append(gating_weight)
-            self.gating_weights_sum += gating_weight.abs().sum()
+
+            if require_gate:
+                gating_weights_sum += gating_weight.abs().sum()
 
         out = self.initial_layers(input)
 
@@ -865,7 +868,10 @@ class GatingResnetBlockGenerator(nn.Module):
 
         out = self.last_layers(out)
 
-        return out
+        if require_gate:
+            return out, gating_weights_sum
+        else:
+            return out
 
 
 class EmbeddingNetworkGenerator(nn.Module):

@@ -75,9 +75,9 @@ class MoECycleGANModel(BaseModel):
         self.visual_names = visual_names_A + visual_names_B  # combine visualizations for A and B
         # specify the models you want to save to the disk. The training/test scripts will call <BaseModel.save_networks> and <BaseModel.load_networks>.
         if self.isTrain:
-            self.model_names = ['G_A', 'G_B', 'D_A', 'D_B']
+            self.model_names = ['G_A', 'G_B', 'D_A', 'D_B', 'Emb', 'C']
         else:  # during test time, only load Gs
-            self.model_names = ['G_A', 'G_B']
+            self.model_names = ['G_A', 'G_B', 'Emb']
 
         # define networks (both Generators and discriminators)
         # The naming is different from those used in the paper.
@@ -105,8 +105,8 @@ class MoECycleGANModel(BaseModel):
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)  # define GAN loss.
             self.criterionCycle = torch.nn.L1Loss()
             self.criterionIdt = torch.nn.L1Loss()
-            self.criterionGateH = networks.GatingSumLoss().to(self.device)
-            self.criterionGateF = networks.GatingSumLoss().to(self.device)
+            # self.criterionGateH = networks.GatingSumLoss().to(self.device)
+            # self.criterionGateF = networks.GatingSumLoss().to(self.device)
             self.criterionEmbCls = torch.nn.CrossEntropyLoss()
 
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
@@ -139,10 +139,10 @@ class MoECycleGANModel(BaseModel):
         self.emb_B = self.netEmb(self.real_A) # classify noisy type
         self.pred_C = self.netC(self.emb_B)
 
-        self.fake_B = self.netG_A(self.real_A, self.emb_B)  # G_A(A)
-        self.rec_A = self.netG_B(self.fake_B, self.emb_B)   # G_B(G_A(A))
-        self.fake_A = self.netG_B(self.real_B, self.emb_B)  # G_B(B)
-        self.rec_B = self.netG_A(self.fake_A, self.emb_B)   # G_A(G_B(B))
+        self.fake_B, self.gate_sum_H = self.netG_A(self.real_A, self.emb_B)  # G_A(A)
+        self.rec_A = self.netG_B(self.fake_B, self.emb_B, require_gate = False)   # G_B(G_A(A))
+        self.fake_A, self.gate_sum_F = self.netG_B(self.real_B, self.emb_B)  # G_B(B)
+        self.rec_B = self.netG_A(self.fake_A, self.emb_B, require_gate = False)   # G_A(G_B(B))
 
     # def backward_C(self):
     #     """Calculate cross-entropy loss for the classifier
@@ -199,10 +199,10 @@ class MoECycleGANModel(BaseModel):
         # Identity loss
         if lambda_idt > 0:
             # G_A should be identity if real_B is fed: ||G_A(B) - B||
-            self.idt_A = self.netG_A(self.real_B, self.emb_B)
+            self.idt_A = self.netG_A(self.real_B, self.emb_B, require_gate = False)
             self.loss_idt_A = self.criterionIdt(self.idt_A, self.real_B) * lambda_B * lambda_idt
             # G_B should be identity if real_A is fed: ||G_B(A) - A||
-            self.idt_B = self.netG_B(self.real_A, self.emb_B)
+            self.idt_B = self.netG_B(self.real_A, self.emb_B, require_gate = False)
             self.loss_idt_B = self.criterionIdt(self.idt_B, self.real_A) * lambda_A * lambda_idt
         else:
             self.loss_idt_A = 0
@@ -217,14 +217,13 @@ class MoECycleGANModel(BaseModel):
         # Backward cycle loss || G_A(G_B(B)) - B||
         self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B
         # MoE gating network loss (forward, H)
-        # loss_G_H = self.criterionGateH([i for i in self.netG_A.named_buffers()][0][1]) * lambda_G_H
+        loss_G_H = self.gate_sum_H * lambda_G_H
         # MoE gating network loss (backward, F)
-        # loss_G_F = self.criterionGateF([i for i in self.netG_B.named_buffers()][0][1]) * lambda_G_F
+        loss_G_F = self.gate_sum_F * lambda_G_F
         # MoE classifier loss
         self.loss_emb_cls = self.criterionEmbCls(self.pred_C, self.real_C)
         # MoE sum
-        # self.loss_Gate_SUM = loss_G_H + loss_G_F + self.loss_emb_cls
-        self.loss_Gate_SUM = self.loss_emb_cls
+        self.loss_Gate_SUM = loss_G_H + loss_G_F + self.loss_emb_cls
         # combined loss and calculate gradients
         self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + lambda_MoE * self.loss_Gate_SUM
         self.loss_G.backward()
