@@ -15,20 +15,40 @@ IMG_EXTENSIONS = [
     '.tif', '.TIF', '.tiff', '.TIFF',
 ]
 
+FLAG_EXTENSIONS = [
+    '.json', '.txt',
+]
+
 
 def is_image_file(filename):
     return any(filename.endswith(extension) for extension in IMG_EXTENSIONS)
 
+def is_flag_file(filename):
+    return any(filename.endswith(extension) for extension in FLAG_EXTENSIONS)
 
-def make_dataset(dir, max_dataset_size=float("inf")):
+def make_dataset(dir, max_dataset_size=float("inf"), use_flag=False):
     images = []
+
+    if use_flag:
+        flag = []
     assert os.path.isdir(dir), '%s is not a valid directory' % dir
 
     for root, _, fnames in sorted(os.walk(dir)):
         for fname in fnames:
             if is_image_file(fname):
-                path = os.path.join(root, fname)
-                images.append(path)
+                img_path = os.path.join(root, fname)
+
+                if use_flag:
+                    log_name = fname.split(".")
+                    log_name[-1] = 'json'
+                    log_name = '.'.join(log_name)
+                    if log_name not in fnames:
+                        continue # assert every image has flag
+                    log_path = os.path.join(root, log_name)
+                    images.append((img_path, log_path))
+                else: # no flag
+                    images.append(img_path)
+
     return images[:min(max_dataset_size, len(images))]
 
 

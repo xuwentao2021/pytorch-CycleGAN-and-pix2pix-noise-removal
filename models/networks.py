@@ -154,6 +154,8 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
         net = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
     elif netG == 'unet_256':
         net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
+    elif netG == 'moe_resnet_9blocks':
+        net = GatingResnetBlockGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=9)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -203,6 +205,39 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
     return init_net(net, init_type, init_gain, gpu_ids)
 
 
+def define_Emb(input_nc, inner_features, n_layers = 7, norm='batch', init_type='normal', init_gain=0.02, gpu_ids=[]):
+    """Create a embedder
+
+    Parameters:
+        input_nc (int)     -- the number of channels in input images
+        inner_features (int)- the number of filters in the middle conv layers
+        n_layers (int)     -- the number of conv layers in the embedder, default 7 (refer to the paper)
+        norm (str)         -- the type of normalization layers used in the network.
+        init_type (str)    -- the name of the initialization method.
+        init_gain (float)  -- scaling factor for normal, xavier and orthogonal.
+        gpu_ids (int list) -- which GPUs the network runs on: e.g., 0,1,2
+
+    Returns a embedder"""
+    
+    norm_layer = get_norm_layer(norm)
+    net = EmbeddingNetworkGenerator(input_nc, n_layers, inner_features, norm_layer)
+
+    return init_net(net, init_type, init_gain, gpu_ids)
+
+
+def define_C(n_noise_types, init_type='normal', init_gain=0.02, gpu_ids=[]):
+    """Create a noise type classifier
+
+    Parameters:
+        n_noise_types (int)-- the number of noise type.
+        init_type (str)    -- the name of the initialization method.
+        init_gain (float)  -- scaling factor for normal, xavier and orthogonal.
+        gpu_ids (int list) -- which GPUs the network runs on: e.g., 0,1,2
+
+    Returns a classifier"""
+    net = ClassifierC(n_noise_types)
+    return init_net(net, init_type, init_gain, gpu_ids)
+
 ##############################################################################
 # Classes
 ##############################################################################
@@ -217,7 +252,7 @@ class GANLoss(nn.Module):
         """ Initialize the GANLoss class.
 
         Parameters:
-            gan_mode (str) - - the type of GAN objective. It currently supports vanilla, lsgan, and wgangp.
+            gan_mode (str) - - the type of GAN objective. It currently supports vanilla, lsgan, and wgangp (default lsgan).
             target_real_label (bool) - - label for a real image
             target_fake_label (bool) - - label of a fake image
 
@@ -272,6 +307,14 @@ class GANLoss(nn.Module):
                 loss = -prediction.mean()
             else:
                 loss = prediction.mean()
+        return loss
+
+class GatingSumLoss(nn.Module):
+    def __init__(self):
+        super(GatingSumLoss, self).__init__()
+    
+    def __call__(self, gate_weights):
+        loss = gate_weights.abs().sum()
         return loss
 
 
@@ -613,3 +656,273 @@ class PixelDiscriminator(nn.Module):
     def forward(self, input):
         """Standard forward."""
         return self.net(input)
+
+
+class MoEEmbedder(nn.Module):
+    def __init__(self, input_nc, layer_n = 7, inner_features = 64, norm_layer=nn.BatchNorm2d, padding_type='reflect'):
+        """CNN based MoE embedding network
+        default with 7 layers, 256*256 image input, 64 image embedding vector output"""
+        super(MoEEmbedder, self).__init__()
+
+        if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        # first layer of the CNN
+        sequence = [nn.Conv2d(input_nc, inner_features, kernel_size=3, stride=1, padding=1, bias=use_bias, padding_mode=padding_type),
+                      norm_layer(inner_features),
+                      nn.ReLU(True)]
+
+        for i in range(layer_n-2):  # add downsampling layers
+            sequence += [nn.Conv2d(inner_features, inner_features , kernel_size=3, stride=2, padding=1, bias=use_bias, padding_mode=padding_type),
+                      norm_layer(inner_features),
+                      nn.ReLU(True)]
+
+        # add last layer, aggregate layer
+        sequence += [nn.Conv2d(inner_features, 1, kernel_size=1, stride=1, padding=0, bias=use_bias, padding_mode=padding_type),
+                      nn.ReLU(True),
+                      nn.Flatten()]
+
+        self.embedder_model = nn.Sequential(*sequence)
+
+    def forward(self, x):
+        return self.embedder_model(x)
+
+
+class ClassifierC(nn.Module):
+    """A Single Layer Perceptron with a Linear(Dense) layer and a Softmax layer"""
+    def __init__(self, out_features, in_features = 64) -> None:
+        super(ClassifierC, self).__init__()
+        self.model = nn.Sequential(
+                nn.Linear(in_features, out_features),
+                nn.Softmax(dim=1)
+        )
+
+    def forward(self, embedding):
+        return self.model(embedding)
+
+
+class MoEGatingNetwork(nn.Module):
+    """A Single Layer Perceptron with a Linear(Dense) layer and a activate(ReLU) layer"""
+    def __init__(self, in_features=64, out_features = 256) -> None:
+        super(MoEGatingNetwork, self).__init__()
+        self.model = nn.Sequential(
+                nn.Linear(in_features, out_features),
+                nn.ReLU(True),
+        )
+    def forward(self, embedding):
+        weight = self.model(embedding)
+        weight = weight[:,:,None,None]
+        return weight
+
+
+class GatingResnetBlock(nn.Module):
+    """Modify the Resnet block by adding MoE togating weight"""
+
+    def __init__(self, dim, padding_type, norm_layer, use_dropout, use_bias):
+        """Initialize the Resnet block
+
+        A resnet block is a conv block with skip connections
+        We construct a conv block with build_conv_block function,
+        and implement skip connections in <forward> function.
+        Original Resnet paper: https://arxiv.org/pdf/1512.03385.pdf
+        """
+        super(GatingResnetBlock, self).__init__()
+        self.conv_block = self.build_conv_block(dim, padding_type, norm_layer, use_dropout, use_bias)
+
+    def build_conv_block(self, dim, padding_type, norm_layer, use_dropout, use_bias):
+        """Construct a convolutional block.
+
+        Parameters:
+            dim (int)           -- the number of channels in the conv layer.
+            padding_type (str)  -- the name of padding layer: reflect | replicate | zero
+            norm_layer          -- normalization layer
+            use_dropout (bool)  -- if use dropout layers.
+            use_bias (bool)     -- if the conv layer uses bias or not
+
+        Returns a conv block (with a conv layer, a normalization layer, and a non-linearity layer (ReLU))
+        """
+        conv_block = []
+        p = 0
+        if padding_type == 'reflect':
+            conv_block += [nn.ReflectionPad2d(1)]
+        elif padding_type == 'replicate':
+            conv_block += [nn.ReplicationPad2d(1)]
+        elif padding_type == 'zero':
+            p = 1
+        else:
+            raise NotImplementedError('padding [%s] is not implemented' % padding_type)
+
+        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias), norm_layer(dim), nn.ReLU(True)]
+        if use_dropout:
+            conv_block += [nn.Dropout(0.5)]
+
+        p = 0
+        if padding_type == 'reflect':
+            conv_block += [nn.ReflectionPad2d(1)]
+        elif padding_type == 'replicate':
+            conv_block += [nn.ReplicationPad2d(1)]
+        elif padding_type == 'zero':
+            p = 1
+        else:
+            raise NotImplementedError('padding [%s] is not implemented' % padding_type)
+        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias), norm_layer(dim)]
+
+        return nn.Sequential(*conv_block)
+
+    def forward(self, x, gating_weight):
+        """Forward function (with skip connections and gating weight)
+        the gating_weight should have the same shape with x"""
+        # self.conv_block.double() # use when gradcheck
+        weighted_x = self.conv_block(x) * gating_weight # weighted the channels
+        out = x + weighted_x  # add skip connections
+        return out
+
+
+class GatingResnetBlockGenerator(nn.Module):
+    """Resnet-based generator that consists of GatingResnet blocks between a few downsampling/upsampling operations.
+
+    I adapt Torch code and idea from the original code and Justin Johnson's neural style transfer project(https://github.com/jcjohnson/fast-neural-style)
+    """
+
+    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=9, padding_type='reflect'):
+        """Construct a Resnet-based generator
+
+        Parameters:
+            input_nc (int)      -- the number of channels in input images
+            output_nc (int)     -- the number of channels in output images
+            ngf (int)           -- the number of filters in the last conv layer
+            norm_layer          -- normalization layer
+            use_dropout (bool)  -- if use dropout layers
+            n_blocks (int)      -- the number of ResNet blocks
+            padding_type (str)  -- the name of padding layer in conv layers: reflect | replicate | zero
+        """
+        assert(n_blocks >= 0)
+        super(GatingResnetBlockGenerator, self).__init__()
+        if type(norm_layer) == functools.partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        # first layer, augment channels
+        initial_layers = [nn.ReflectionPad2d(3),
+                 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
+                 norm_layer(ngf),
+                 nn.ReLU(True)]
+
+        # down sampling
+        n_downsampling = 2
+        for i in range(n_downsampling):  # add downsampling layers
+            mult = 2 ** i
+            initial_layers += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                      norm_layer(ngf * mult * 2),
+                      nn.ReLU(True)]
+
+        # resnet blocks
+        mult = 2 ** n_downsampling
+        self.resnet_layers = nn.ModuleList(n_blocks*[GatingResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)])
+        self.gating_networks = nn.ModuleList(n_blocks*[MoEGatingNetwork(out_features=ngf * mult)])
+
+        # generate gating networks (for each Resnet block)
+        # self.gating_networks = n_blocks * [init_net(MoEGatingNetwork(out_features=ngf * mult), gpu_ids=[0])]
+
+        # upsampling, activate layer(tanh) and output
+        last_layers = []
+        for i in range(n_downsampling):  # add upsampling layers
+            mult = 2 ** (n_downsampling - i)
+            last_layers += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
+                                         kernel_size=3, stride=2,
+                                         padding=1, output_padding=1,
+                                         bias=use_bias),
+                      norm_layer(int(ngf * mult / 2)),
+                      nn.ReLU(True)]
+        last_layers += [nn.ReflectionPad2d(3)]
+        last_layers += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
+        last_layers += [nn.Tanh()]
+
+        self.initial_layers = nn.Sequential(*initial_layers)
+        self.last_layers = nn.Sequential(*last_layers)
+
+    # def get_gating_weights(self):
+    #     return self.gating_weights
+
+    def forward(self, input, embedding, require_gate = True):
+        """Standard forward"""
+
+        self.gating_weights = []
+        if require_gate:
+            gating_weights_sum = 0
+        for gating_network in self.gating_networks:
+            gating_weight = gating_network(embedding)
+            self.gating_weights.append(gating_weight)
+
+            if require_gate:
+                gating_weights_sum += gating_weight.abs().sum()
+
+        out = self.initial_layers(input)
+
+        for (layer, weight) in zip(self.resnet_layers, self.gating_weights):
+            # resnet with gating weight
+            out = layer(out, weight)
+
+        out = self.last_layers(out)
+
+        if require_gate:
+            return out, gating_weights_sum
+        else:
+            return out
+
+
+class EmbeddingNetworkGenerator(nn.Module):
+    def __init__(self, input_nc, layer_n = 7, inner_features = 64, norm_layer=nn.BatchNorm2d, padding_type='reflect'):
+        super(EmbeddingNetworkGenerator, self).__init__()
+        self.embedding_model = MoEEmbedder(input_nc, layer_n, inner_features, norm_layer, padding_type)
+
+    def forward(self, x):
+        return self.embedding_model(x)
+
+
+
+if __name__ == '__main__':
+    embedder = MoEEmbedder(1)
+    embedder = embedder.double()
+
+    # gating_network = MoEGatingNetwork(64, 256)
+    # gating_network = gating_network.double()
+
+    classifier = ClassifierC(4)
+    classifier = classifier.double()
+
+    gating_resnet = GatingResnetBlockGenerator(1, 1, n_blocks = 1)
+    gating_resnet = gating_resnet.double()
+
+    img = torch.randn((10,1,256,256), requires_grad=True, dtype=torch.double)
+    # img = torch.randn((1,1,256,256), requires_grad=True)
+
+    embedding = embedder(img)
+    cls = classifier(embedding)
+    
+    # gating_weight = gating_network(embedding)
+    # gating_weights = gating_weight
+
+    # processed_img = gating_resnet(img, gating_weights)
+
+    print(img.shape)
+    print(embedder)
+    print("# embedder params: ", sum(params.numel() for params in embedder.parameters()))
+    # print(gating_network)
+    # print("# gating net params: ", sum(params.numel() for params in gating_network.parameters()))
+    print(embedding.shape)
+    print(cls.shape)
+    # print(gating_weight.shape)
+    # print(processed_img.shape)
+    
+
+    # grad check
+    # from torch.autograd import gradcheck
+    # print(gradcheck(gating_network, embedding))
+
+
+
+
