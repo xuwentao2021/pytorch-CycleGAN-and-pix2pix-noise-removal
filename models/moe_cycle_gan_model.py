@@ -50,9 +50,9 @@ class MoECycleGANModel(BaseModel):
             parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for cycle loss (B -> A -> B)')
             parser.add_argument('--lambda_G_H', type=float, default=0.1, help='weight for gating network loss (A -> B)')
             parser.add_argument('--lambda_G_F', type=float, default=0.1, help='weight for gating network loss (B -> A)')
-            parser.add_argument('--lambda_MoE', type=float, default=1, help='weight for the MoE part')
+            parser.add_argument('--lambda_MoE', type=float, default=0.5, help='weight for the MoE part')
             parser.add_argument('--lambda_identity', type=float, default=0.5, help='use identity mapping. Setting lambda_identity other than 0 has an effect of scaling the weight of the identity mapping loss. For example, if the weight of the identity loss should be 10 times smaller than the weight of the reconstruction loss, please set lambda_identity = 0.1')
-            parser.add_argument('--embedding_epochs', type=int, default=10, help='embedding network and gating network training epochs, after then, the two networks will be frozen')
+            parser.add_argument('--embedding_epochs', type=int, default=10, help='embedding network and classifier training epochs, after then, the two networks will be frozen')
 
         return parser
 

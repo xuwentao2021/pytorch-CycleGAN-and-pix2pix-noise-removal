@@ -814,8 +814,8 @@ class GatingResnetBlock(nn.Module):
         """Forward function (with skip connections and gating weight)
         the gating_weight should have the same shape with x"""
         # self.conv_block.double() # use when gradcheck
-        weighted_x = self.conv_block(x) * gating_weight # weighted the channels
-        out = x + weighted_x  # add skip connections
+        out = (self.conv_block(x) + x) * gating_weight # skip connect then weight the channels
+        # out = x + weighted_x  # add skip connections
         return out
 
 
@@ -845,52 +845,49 @@ class GatingResnetBlockGenerator(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
 
         # first layer, augment channels
-        # initial_layers = [nn.ReflectionPad2d(3),
-        #          nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
-        #          norm_layer(ngf),
-        #          nn.ReLU(True)]
-
         initial_layers = [
-            nn.Conv2d(input_nc, ngf, kernel_size=1, padding=0, bias=use_bias, padding_mode=padding_type),
+            nn.ReflectionPad2d(3),
+            nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
             norm_layer(ngf),
             nn.ReLU(True)]
 
+        # initial_layers = [
+        #     nn.Conv2d(input_nc, ngf, kernel_size=1, padding=0, bias=use_bias, padding_mode=padding_type),
+        #     norm_layer(ngf),
+        #     nn.ReLU(True)]
+
         # down sampling
-        # n_downsampling = 2
-        # for i in range(n_downsampling):  # add downsampling layers
-        #     mult = 2 ** i
-        #     initial_layers += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
-        #               norm_layer(ngf * mult * 2),
-        #               nn.ReLU(True)]
+        n_downsampling = 2
+        for i in range(n_downsampling):  # add downsampling layers
+            mult = 2 ** i
+            initial_layers += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                      norm_layer(ngf * mult * 2),
+                      nn.ReLU(True)]
 
         # # resnet blocks
-        # mult = 2 ** n_downsampling
-        # self.resnet_layers = nn.ModuleList(n_blocks*[GatingResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)])
-        # self.gating_networks = nn.ModuleList(n_blocks*[MoEGatingNetwork(out_features=ngf * mult)])
+        mult = 2 ** n_downsampling
+        self.resnet_layers = nn.ModuleList(n_blocks*[GatingResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)])
+        self.gating_networks = nn.ModuleList(n_blocks*[MoEGatingNetwork(out_features=ngf * mult)])
 
-        self.resnet_layers = nn.ModuleList(n_blocks*[GatingResnetBlock(ngf, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)])
-        self.gating_networks = nn.ModuleList(n_blocks*[MoEGatingNetwork(out_features=ngf)])
+        # self.resnet_layers = nn.ModuleList(n_blocks*[GatingResnetBlock(ngf, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)])
+        # self.gating_networks = nn.ModuleList(n_blocks*[MoEGatingNetwork(out_features=ngf)])
 
         # upsampling, activate layer(tanh) and output
         last_layers = []
-        # for i in range(n_downsampling):  # add upsampling layers
-        #     mult = 2 ** (n_downsampling - i)
-        #     last_layers += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
-        #                                  kernel_size=3, stride=2,
-        #                                  padding=1, output_padding=1,
-        #                                  bias=use_bias),
-        #               norm_layer(int(ngf * mult / 2)),
-        #               nn.ReLU(True)]
-        # last_layers += [nn.ReflectionPad2d(3)]
-        # last_layers += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
-        last_layers += [nn.Conv2d(ngf, output_nc, kernel_size=1, padding=0, padding_mode=padding_type)]
+        for i in range(n_downsampling):  # add upsampling layers
+            mult = 2 ** (n_downsampling - i)
+            last_layers += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
+                                         kernel_size=3, stride=2,
+                                         padding=1, output_padding=1,
+                                         bias=use_bias),
+                      norm_layer(int(ngf * mult / 2)),
+                      nn.ReLU(True)]
+        last_layers += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=3, padding_mode=padding_type)]
+        # last_layers += [nn.Conv2d(ngf, output_nc, kernel_size=1, padding=0, padding_mode=padding_type)]
         last_layers += [nn.Tanh()]
 
         self.initial_layers = nn.Sequential(*initial_layers)
         self.last_layers = nn.Sequential(*last_layers)
-
-    # def get_gating_weights(self):
-    #     return self.gating_weights
 
     def forward(self, input, embedding, require_gate = True):
         """Standard forward"""
