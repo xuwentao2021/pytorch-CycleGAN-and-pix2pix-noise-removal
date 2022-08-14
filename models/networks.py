@@ -814,8 +814,8 @@ class GatingResnetBlock(nn.Module):
         """Forward function (with skip connections and gating weight)
         the gating_weight should have the same shape with x"""
         # self.conv_block.double() # use when gradcheck
-        out = (self.conv_block(x) + x) * gating_weight # skip connect then weight the channels
-        # out = x + weighted_x  # add skip connections
+        weighted_x = self.conv_block(x) * gating_weight # weight the channels
+        out = x + weighted_x  # then skip connections
         return out
 
 
