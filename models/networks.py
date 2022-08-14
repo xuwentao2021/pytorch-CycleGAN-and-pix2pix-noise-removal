@@ -670,19 +670,58 @@ class MoEEmbedder(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
 
         # first layer of the CNN
-        sequence = [nn.Conv2d(input_nc, inner_features, kernel_size=3, stride=1, padding=1, bias=use_bias, padding_mode=padding_type),
-                      norm_layer(inner_features),
-                      nn.ReLU(True)]
+        sequence = [
+            # (b, 1, 256, 256)
+            nn.Conv2d(input_nc, 32, kernel_size=5, stride=2, padding=2, dilation=2, bias=use_bias, padding_mode=padding_type),
+            norm_layer(32),
+            nn.ReLU(),
+            # (b, 32, 128, 128)
+            nn.Conv2d(32, 64, kernel_size=5, stride=2, padding=2, bias=True, padding_mode='reflect'),
+            norm_layer(64),
+            nn.ReLU(),
+            # (b, 64, 64, 64)
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=True, padding_mode='reflect'),
+            norm_layer(128),
+            nn.ReLU(),
+            # (b, 128, 32, 32)
+            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode='reflect'),
+            norm_layer(256),
+            nn.ReLU(),
+            # (b, 256, 16, 16)
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode='reflect'),
+            norm_layer(256),
+            nn.ReLU(),
+            # (b, 256, 8, 8)
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode='reflect'),
+            norm_layer(256),
+            nn.ReLU(),
+            # (b, 256, 4, 4)
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode='reflect'),
+            norm_layer(256),
+            nn.ReLU(),
+            # (b, 256, 2, 2)
+            nn.Flatten(),
+            # (b, 1024),
+            nn.Linear(1024,1024),
+            nn.ReLU(),
+            nn.Dropout(p=.5),
+            nn.Linear(1024,64),
+            nn.ReLU(),
+            nn.Dropout(p=.5),
+        ]
 
-        for i in range(layer_n-2):  # add downsampling layers
-            sequence += [nn.Conv2d(inner_features, inner_features , kernel_size=3, stride=2, padding=1, bias=use_bias, padding_mode=padding_type),
-                      norm_layer(inner_features),
-                      nn.ReLU(True)]
+        # for i in range(layer_n-2):  # add downsampling layers
+        #     next_features = 2*inner_features
+        #     sequence += [
+        #         nn.Conv2d(inner_features, next_features , kernel_size=3, stride=2, padding=1, bias=use_bias, padding_mode=padding_type),
+        #         norm_layer(next_features),
+        #         nn.ReLU(True)]
+        #     inner_features = next_features
 
-        # add last layer, aggregate layer
-        sequence += [nn.Conv2d(inner_features, 1, kernel_size=1, stride=1, padding=0, bias=use_bias, padding_mode=padding_type),
-                      nn.ReLU(True),
-                      nn.Flatten()]
+        # # add last layer, aggregate layer
+        # sequence += [nn.Conv2d(inner_features, 1, kernel_size=1, stride=1, padding=0, bias=use_bias, padding_mode=padding_type),
+        #               nn.ReLU(True),
+        #               nn.Flatten()]
 
         self.embedder_model = nn.Sequential(*sequence)
 
@@ -806,39 +845,45 @@ class GatingResnetBlockGenerator(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
 
         # first layer, augment channels
-        initial_layers = [nn.ReflectionPad2d(3),
-                 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
-                 norm_layer(ngf),
-                 nn.ReLU(True)]
+        # initial_layers = [nn.ReflectionPad2d(3),
+        #          nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
+        #          norm_layer(ngf),
+        #          nn.ReLU(True)]
+
+        initial_layers = [
+            nn.Conv2d(input_nc, ngf, kernel_size=1, padding=0, bias=use_bias, padding_mode=padding_type),
+            norm_layer(ngf),
+            nn.ReLU(True)]
 
         # down sampling
-        n_downsampling = 2
-        for i in range(n_downsampling):  # add downsampling layers
-            mult = 2 ** i
-            initial_layers += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
-                      norm_layer(ngf * mult * 2),
-                      nn.ReLU(True)]
+        # n_downsampling = 2
+        # for i in range(n_downsampling):  # add downsampling layers
+        #     mult = 2 ** i
+        #     initial_layers += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+        #               norm_layer(ngf * mult * 2),
+        #               nn.ReLU(True)]
 
-        # resnet blocks
-        mult = 2 ** n_downsampling
-        self.resnet_layers = nn.ModuleList(n_blocks*[GatingResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)])
-        self.gating_networks = nn.ModuleList(n_blocks*[MoEGatingNetwork(out_features=ngf * mult)])
+        # # resnet blocks
+        # mult = 2 ** n_downsampling
+        # self.resnet_layers = nn.ModuleList(n_blocks*[GatingResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)])
+        # self.gating_networks = nn.ModuleList(n_blocks*[MoEGatingNetwork(out_features=ngf * mult)])
 
-        # generate gating networks (for each Resnet block)
-        # self.gating_networks = n_blocks * [init_net(MoEGatingNetwork(out_features=ngf * mult), gpu_ids=[0])]
+        self.resnet_layers = nn.ModuleList(n_blocks*[GatingResnetBlock(ngf, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)])
+        self.gating_networks = nn.ModuleList(n_blocks*[MoEGatingNetwork(out_features=ngf)])
 
         # upsampling, activate layer(tanh) and output
         last_layers = []
-        for i in range(n_downsampling):  # add upsampling layers
-            mult = 2 ** (n_downsampling - i)
-            last_layers += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
-                                         kernel_size=3, stride=2,
-                                         padding=1, output_padding=1,
-                                         bias=use_bias),
-                      norm_layer(int(ngf * mult / 2)),
-                      nn.ReLU(True)]
-        last_layers += [nn.ReflectionPad2d(3)]
-        last_layers += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
+        # for i in range(n_downsampling):  # add upsampling layers
+        #     mult = 2 ** (n_downsampling - i)
+        #     last_layers += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
+        #                                  kernel_size=3, stride=2,
+        #                                  padding=1, output_padding=1,
+        #                                  bias=use_bias),
+        #               norm_layer(int(ngf * mult / 2)),
+        #               nn.ReLU(True)]
+        # last_layers += [nn.ReflectionPad2d(3)]
+        # last_layers += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
+        last_layers += [nn.Conv2d(ngf, output_nc, kernel_size=1, padding=0, padding_mode=padding_type)]
         last_layers += [nn.Tanh()]
 
         self.initial_layers = nn.Sequential(*initial_layers)
@@ -888,16 +933,16 @@ if __name__ == '__main__':
     embedder = MoEEmbedder(1)
     embedder = embedder.double()
 
-    # gating_network = MoEGatingNetwork(64, 256)
+    # gating_network = GatingResnetBlockGenerator(1, 1)
     # gating_network = gating_network.double()
 
     classifier = ClassifierC(4)
     classifier = classifier.double()
 
-    gating_resnet = GatingResnetBlockGenerator(1, 1, n_blocks = 1)
+    gating_resnet = GatingResnetBlockGenerator(1, 1, n_blocks = 9)
     gating_resnet = gating_resnet.double()
 
-    img = torch.randn((10,1,256,256), requires_grad=True, dtype=torch.double)
+    img = torch.randn((1,1,256,256), requires_grad=True, dtype=torch.double)
     # img = torch.randn((1,1,256,256), requires_grad=True)
 
     embedding = embedder(img)
@@ -906,17 +951,18 @@ if __name__ == '__main__':
     # gating_weight = gating_network(embedding)
     # gating_weights = gating_weight
 
-    # processed_img = gating_resnet(img, gating_weights)
+    processed_img = gating_resnet(img, embedding)
 
     print(img.shape)
     print(embedder)
     print("# embedder params: ", sum(params.numel() for params in embedder.parameters()))
     # print(gating_network)
-    # print("# gating net params: ", sum(params.numel() for params in gating_network.parameters()))
+    print(gating_resnet)
+    print("# gating net params: ", sum(params.numel() for params in gating_resnet.parameters()))
     print(embedding.shape)
     print(cls.shape)
     # print(gating_weight.shape)
-    # print(processed_img.shape)
+    print(processed_img[0].shape)
     
 
     # grad check

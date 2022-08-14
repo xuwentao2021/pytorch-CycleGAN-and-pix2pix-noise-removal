@@ -43,7 +43,7 @@ class MoECycleGANModel(BaseModel):
         Dropout is not used in the original CycleGAN paper.
         """
         parser.set_defaults(no_dropout=True)  # default CycleGAN did not use dropout
-        parser.add_argument('--emb_inner_features', type=int, default=64, help='inner features in embedding CNN, default 64')
+        parser.add_argument('--emb_inner_features', type=int, default=8, help='inner features in embedding CNN, default 64')
         parser.add_argument('--noise_type', type=int, default=3, help='number of noise type')
         if is_train:
             parser.add_argument('--lambda_A', type=float, default=10.0, help='weight for cycle loss (A -> B -> A)')
@@ -68,9 +68,9 @@ class MoECycleGANModel(BaseModel):
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         visual_names_A = ['real_A', 'fake_B', 'rec_A']
         visual_names_B = ['real_B', 'fake_A', 'rec_B']
-        if self.isTrain and self.opt.lambda_identity > 0.0:  # if identity loss is used, we also visualize idt_B=G_A(B) ad idt_A=G_A(B)
-            visual_names_A.append('idt_B')
-            visual_names_B.append('idt_A')
+        # if self.isTrain and self.opt.lambda_identity > 0.0:  # if identity loss is used, we also visualize idt_B=G_A(B) ad idt_A=G_A(B)
+        #     visual_names_A.append('idt_B')
+        #     visual_names_B.append('idt_A')
 
         self.visual_names = visual_names_A + visual_names_B  # combine visualizations for A and B
         # specify the models you want to save to the disk. The training/test scripts will call <BaseModel.save_networks> and <BaseModel.load_networks>.
@@ -105,18 +105,16 @@ class MoECycleGANModel(BaseModel):
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)  # define GAN loss.
             self.criterionCycle = torch.nn.L1Loss()
             self.criterionIdt = torch.nn.L1Loss()
-            # self.criterionGateH = networks.GatingSumLoss().to(self.device)
-            # self.criterionGateF = networks.GatingSumLoss().to(self.device)
             self.criterionEmbCls = torch.nn.CrossEntropyLoss()
 
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
             # itertools.chain() can cascade multiple objects to obtain a larger iterator
-            self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters(),self.netC.parameters(), self.netEmb.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
+            self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.Adam(itertools.chain(self.netD_A.parameters(), self.netD_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
-            # self.optimizer_C = torch.optim.Adam(self.netC.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
+            self.optimizer_C = torch.optim.Adam(itertools.chain(self.netC.parameters(), self.netEmb.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
-            # self.optimizers.append(self.optimizer_C)
+            self.optimizers.append(self.optimizer_C)
 
     def set_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
@@ -135,6 +133,8 @@ class MoECycleGANModel(BaseModel):
 
 
     def forward(self):
+        self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B', 'Gate_SUM', 'emb_cls']
+        self.visual_names = ['real_A', 'fake_B', 'rec_A','real_B', 'fake_A', 'rec_B']
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
         self.emb_B = self.netEmb(self.real_A) # classify noisy type
         self.pred_C = self.netC(self.emb_B)
@@ -154,7 +154,18 @@ class MoECycleGANModel(BaseModel):
     #     loss_C = self.criterionEmbCls(self.pred_C, self.real_C)
     #     self.loss_emb_cls = loss_C
     #     loss_C.backward(retain_graph=True)
-        
+
+    def forward_cls(self):
+        self.loss_names = ['emb_cls']
+        self.visual_names = []
+
+
+        self.emb_B = self.netEmb(self.real_A) # classify noisy type
+        self.pred_C = self.netC(self.emb_B)
+        # self.fake_B, self.gate_sum_H = self.netG_A(self.real_A, self.emb_B)  # G_A(A)
+        # self.rec_A = self.netG_B(self.fake_B, self.emb_B, require_gate = False)   # G_B(G_A(A))
+        # self.fake_A, self.gate_sum_F = self.netG_B(self.real_B, self.emb_B)  # G_B(B)
+        # self.rec_B = self.netG_A(self.fake_A, self.emb_B, require_gate = False)   # G_A(G_B(B))        
 
     def backward_D_basic(self, netD, real, fake):
         """Calculate GAN loss for the discriminator
@@ -188,14 +199,17 @@ class MoECycleGANModel(BaseModel):
         fake_A = self.fake_A_pool.query(self.fake_A)
         self.loss_D_B = self.backward_D_basic(self.netD_B, self.real_A, fake_A)
 
-    def backward_G(self, epoch):
+    def backward_G(self):
         """Calculate the loss for generators G_A and G_B"""
         lambda_idt = self.opt.lambda_identity
         lambda_A = self.opt.lambda_A
         lambda_B = self.opt.lambda_B
-        lambda_G_H = self.opt.lambda_G_H if epoch < self.opt.embedding_epochs else 0
-        lambda_G_F = self.opt.lambda_G_F if epoch < self.opt.embedding_epochs else 0
-        lambda_MoE = self.opt.lambda_MoE if epoch < self.opt.embedding_epochs else 0
+        # lambda_G_H = self.opt.lambda_G_H if epoch < self.opt.embedding_epochs else 0
+        # lambda_G_F = self.opt.lambda_G_F if epoch < self.opt.embedding_epochs else 0
+        # lambda_MoE = self.opt.lambda_MoE if epoch < self.opt.embedding_epochs else 0
+        lambda_G_H = self.opt.lambda_G_H
+        lambda_G_F = self.opt.lambda_G_F
+        lambda_MoE = self.opt.lambda_MoE
         # Identity loss
         if lambda_idt > 0:
             # G_A should be identity if real_B is fed: ||G_A(B) - B||
@@ -220,36 +234,41 @@ class MoECycleGANModel(BaseModel):
         loss_G_H = self.gate_sum_H * lambda_G_H
         # MoE gating network loss (backward, F)
         loss_G_F = self.gate_sum_F * lambda_G_F
-        # MoE classifier loss
-        self.loss_emb_cls = self.criterionEmbCls(self.pred_C, self.real_C)
+        self.loss_emb_cls = self.criterionEmbCls(self.real_C, self.pred_C)
         # MoE sum
-        self.loss_Gate_SUM = loss_G_H + loss_G_F + self.loss_emb_cls
+        self.loss_Gate_SUM = loss_G_H + loss_G_F
         # combined loss and calculate gradients
         self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + lambda_MoE * self.loss_Gate_SUM
         self.loss_G.backward()
+    
+    def backward_C(self):
+        # MoE classifier loss
+        self.loss_emb_cls = self.criterionEmbCls(self.pred_C, self.real_C)
+        self.loss_emb_cls.backward()
+
 
     def optimize_parameters(self, epoch):
         """Calculate losses, gradients, and update network weights; called in every training iteration"""
-        # forward
-        self.forward()      # compute fake images and reconstruction images.
-        # C
-        # if epoch < self.opt.embedding_epochs:
-        #     self.set_requires_grad([self.netD_A, self.netD_B], False)  # Ds require no gradients when optimizing C
-        #     self.optimizer_C.zero_grad()  # set G_A and G_B's gradients to zero
-        #     self.backward_C()             # calculate gradients for G_A and G_B
-        #     self.optimizer_C.step()       # update G_A and G_B's weights
-        # else:
-        #     self.set_requires_grad([self.netC], False)
-        # G_A and G_B
-        self.set_requires_grad([self.netD_A, self.netD_B], False)  # Ds require no gradients when optimizing Gs
-        self.optimizer_G.zero_grad()  # set G_A and G_B's gradients to zero
-        # self.optimizer_C.zero_grad()
-        self.backward_G(epoch)             # calculate gradients for G_A and G_B
-        self.optimizer_G.step()       # update G_A and G_B's weights
-        # self.optimizer_C.step()
-        # D_A and D_B
-        self.set_requires_grad([self.netD_A, self.netD_B], True)
-        self.optimizer_D.zero_grad()   # set D_A and D_B's gradients to zero
-        self.backward_D_A()      # calculate gradients for D_A
-        self.backward_D_B()      # calculate graidents for D_B
-        self.optimizer_D.step()  # update D_A and D_B's weights
+        if epoch < self.opt.embedding_epochs:
+            self.forward_cls()
+            # Emb - C
+            self.set_requires_grad([self.netC, self.netEmb], True)
+            self.optimizer_C.zero_grad()
+            self.backward_C()
+            self.optimizer_C.step()
+        else:
+            # forward
+            self.forward()      # compute fake images and reconstruction images.
+            # G_A and G_B
+            self.set_requires_grad([self.netD_A, self.netD_B, self.netC, self.netEmb], False)  # Ds require no gradients when optimizing Gs
+            self.optimizer_G.zero_grad()  # set G_A and G_B's gradients to zero
+            # self.optimizer_C.zero_grad()
+            self.backward_G()             # calculate gradients for G_A and G_B
+            self.optimizer_G.step()       # update G_A and G_B's weights
+
+            # D_A and D_B
+            self.set_requires_grad([self.netD_A, self.netD_B], True)
+            self.optimizer_D.zero_grad()   # set D_A and D_B's gradients to zero
+            self.backward_D_A()      # calculate gradients for D_A
+            self.backward_D_B()      # calculate graidents for D_B
+            self.optimizer_D.step()  # update D_A and D_B's weights
