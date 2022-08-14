@@ -109,7 +109,7 @@ class MoECycleGANModel(BaseModel):
 
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
             # itertools.chain() can cascade multiple objects to obtain a larger iterator
-            self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
+            self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters(),self.netC.parameters(), self.netEmb.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.Adam(itertools.chain(self.netD_A.parameters(), self.netD_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_C = torch.optim.Adam(itertools.chain(self.netC.parameters(), self.netEmb.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizers.append(self.optimizer_G)
@@ -238,7 +238,7 @@ class MoECycleGANModel(BaseModel):
         # MoE sum
         self.loss_Gate_SUM = loss_G_H + loss_G_F
         # combined loss and calculate gradients
-        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + lambda_MoE * self.loss_Gate_SUM
+        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + lambda_MoE * (self.loss_Gate_SUM + self.loss_emb_cls)
         self.loss_G.backward()
     
     def backward_C(self):
@@ -260,9 +260,8 @@ class MoECycleGANModel(BaseModel):
             # forward
             self.forward()      # compute fake images and reconstruction images.
             # G_A and G_B
-            self.set_requires_grad([self.netD_A, self.netD_B, self.netC, self.netEmb], False)  # Ds require no gradients when optimizing Gs
+            self.set_requires_grad([self.netD_A, self.netD_B], False)  # Ds require no gradients when optimizing Gs
             self.optimizer_G.zero_grad()  # set G_A and G_B's gradients to zero
-            # self.optimizer_C.zero_grad()
             self.backward_G()             # calculate gradients for G_A and G_B
             self.optimizer_G.step()       # update G_A and G_B's weights
 
