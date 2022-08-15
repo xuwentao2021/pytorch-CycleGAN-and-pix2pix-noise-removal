@@ -866,8 +866,15 @@ class GatingResnetBlockGenerator(nn.Module):
 
         # # resnet blocks
         mult = 2 ** n_downsampling
-        self.resnet_layers = nn.ModuleList(n_blocks*[GatingResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)])
-        self.gating_networks = nn.ModuleList(n_blocks*[MoEGatingNetwork(out_features=ngf * mult)])
+        resnet_list = []
+        gating_networks_list = []
+
+        for i in range(n_blocks):
+            resnet_list += [GatingResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+            gating_networks_list += [MoEGatingNetwork(out_features=ngf * mult)]
+
+        self.resnet_layers = nn.ModuleList(resnet_list)
+        self.gating_networks = nn.ModuleList(gating_networks_list)
 
         # self.resnet_layers = nn.ModuleList(n_blocks*[GatingResnetBlock(ngf, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)])
         # self.gating_networks = nn.ModuleList(n_blocks*[MoEGatingNetwork(out_features=ngf)])
