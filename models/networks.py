@@ -902,7 +902,7 @@ class GatingResnetBlockGenerator(nn.Module):
 
         self.gating_weights = []
         if require_gate:
-            gating_weights_sum = 0
+            gating_weights_mean = 0
         for gating_network in self.gating_networks:
             gating_weight = gating_network(embedding)
             self.gating_weights.append(gating_weight)
@@ -919,7 +919,7 @@ class GatingResnetBlockGenerator(nn.Module):
         out = self.last_layers(out)
 
         if require_gate:
-            return out, gating_weights_mean
+            return out, gating_weights_mean/len(self.gating_networks)
         else:
             return out
 
