@@ -676,27 +676,27 @@ class MoEEmbedder(nn.Module):
             norm_layer(32),
             nn.ReLU(),
             # (b, 32, 128, 128)
-            nn.Conv2d(32, 64, kernel_size=5, stride=2, padding=2, bias=True, padding_mode='reflect'),
+            nn.Conv2d(32, 64, kernel_size=5, stride=2, padding=2, bias=True, padding_mode=padding_type),
             norm_layer(64),
             nn.ReLU(),
             # (b, 64, 64, 64)
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=True, padding_mode='reflect'),
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=True, padding_mode=padding_type),
             norm_layer(128),
             nn.ReLU(),
             # (b, 128, 32, 32)
-            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode='reflect'),
+            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode=padding_type),
             norm_layer(256),
             nn.ReLU(),
             # (b, 256, 16, 16)
-            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode='reflect'),
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode=padding_type),
             norm_layer(256),
             nn.ReLU(),
             # (b, 256, 8, 8)
-            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode='reflect'),
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode=padding_type),
             norm_layer(256),
             nn.ReLU(),
             # (b, 256, 4, 4)
-            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode='reflect'),
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=True, padding_mode=padding_type),
             norm_layer(256),
             nn.ReLU(),
             # (b, 256, 2, 2)
@@ -749,7 +749,7 @@ class MoEGatingNetwork(nn.Module):
         self.model = nn.Sequential(
                 nn.Linear(in_features, out_features),
                 nn.ReLU(True),
-                nn.Softmax()
+                nn.Softmax(dim=1)
         )
     def forward(self, embedding):
         weight = self.model(embedding)
@@ -908,7 +908,7 @@ class GatingResnetBlockGenerator(nn.Module):
             self.gating_weights.append(gating_weight)
 
             if require_gate:
-                gating_weights_sum += gating_weight.abs().sum()
+                gating_weights_mean += gating_weight.abs().mean()
 
         out = self.initial_layers(input)
 
@@ -919,7 +919,7 @@ class GatingResnetBlockGenerator(nn.Module):
         out = self.last_layers(out)
 
         if require_gate:
-            return out, gating_weights_sum
+            return out, gating_weights_mean
         else:
             return out
 
