@@ -120,6 +120,8 @@ def run_inference(opt, dataset):
 
     # create a result dir
     result_dir = os.path.join(opt.results_dir, opt.name) # ./results/moe_17_aug/
+    if not os.exists(result_dir):
+        os.makedirs(result_dir)
     # instantiate a Image.Image -> Tensor transform class
     transform_img2tensor = transforms.Compose([transforms.ToTensor(),transforms.Normalize((0.5,), (0.5,))])
 
