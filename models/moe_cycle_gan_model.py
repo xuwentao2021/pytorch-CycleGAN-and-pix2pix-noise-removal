@@ -239,7 +239,7 @@ class MoECycleGANModel(BaseModel):
         # self.loss_Gate_SUM = 0
         # lambda_MoE = 0
         # combined loss and calculate gradients
-        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + lambda_MoE * self.loss_MoE
+        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + lambda_MoE * self.loss_emb_cls + self.loss_Gate_SUM
         self.loss_G.backward()
     
     def backward_C(self):

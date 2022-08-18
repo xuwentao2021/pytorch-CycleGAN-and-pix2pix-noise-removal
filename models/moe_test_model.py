@@ -41,7 +41,7 @@ class MoETestModel(BaseModel):
         # specify the images you want to save/display. The training/test scripts  will call <BaseModel.get_current_visuals>
         self.visual_names = ['real', 'fake']
         # specify the models you want to save to the disk. The training/test scripts will call <BaseModel.save_networks> and <BaseModel.load_networks>
-        self.model_names = ['G' + opt.model_suffix, 'Emb']  # A generator and embedding network are needed.
+        self.model_names = ['Emb', 'G' + opt.model_suffix]  # A generator and embedding network are needed.
         self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG,
                                       opt.norm, not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
         self.netEmb = networks.define_Emb(opt.input_nc, 64, 7, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
@@ -60,14 +60,14 @@ class MoETestModel(BaseModel):
 
         We need to use 'single_dataset' dataset mode. It only load images from one domain.
         """
-        self.real = input['A'].to(self.device)
-        self.image_paths = input['A_paths']
+        self.real = input.to(self.device)
 
     def forward(self):
         """Run forward pass."""
         self.emb = self.netEmb(self.real)
         # self.fake = self.netG(self.real)  # G(real)
         self.fake = self.netG_A(self.real, self.emb, False)
+        return self.fake # make the inference easier, directly return the result Tensor
 
     def optimize_parameters(self):
         """No optimization for test model."""

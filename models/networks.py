@@ -748,9 +748,8 @@ class MoEGatingNetwork(nn.Module):
         super(MoEGatingNetwork, self).__init__()
         self.model = nn.Sequential(
                 nn.Linear(in_features, out_features),
-                nn.ReLU(True),
-                nn.Softmax(dim=1)
-        )
+                nn.ReLU(True)
+                )
     def forward(self, embedding):
         weight = self.model(embedding)
         weight = weight[:,:,None,None]
