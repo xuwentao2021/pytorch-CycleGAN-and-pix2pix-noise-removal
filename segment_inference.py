@@ -127,7 +127,7 @@ def run_inference(opt, dataset):
 
     for i, data in enumerate(dataset): # each iter generate a full image. It need to be segmented.
         TIMESTAMP_img_seg = time()
-        img = Image.open(data['A_paths'][0])
+        img = Image.open(data['A_paths'][0]).convert('L')
         img_seg_iter = image_segment_extractor(img, opt.load_size, opt.stride)
         metadata = get_image_metadata(img, opt.load_size, opt.stride)
         prc_img_seg_list = []
@@ -223,7 +223,7 @@ if __name__ == '__main__':
         os.makedirs(result_dir)
 
     import multiprocessing as mp
-    nprocs = 4
+    nprocs = 1
     dataset_parts = mp_datasets(opt, nprocs)  # create a dataset given opt.dataset_mode and other options
     mp.set_start_method('spawn') # torch multiprocessing acquirement
     pool=[]
