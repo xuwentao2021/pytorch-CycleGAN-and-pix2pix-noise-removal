@@ -39,6 +39,7 @@ from models import create_model
 from PIL import Image
 from util.util import tensor2im
 from time import time
+from tqdm import tqdm
 
 
 def image_segment_extractor(img_src: Image.Image, patch_size: int, stride: int) -> Iterator[Image.Image]:
@@ -68,10 +69,12 @@ def image_segment_extractor(img_src: Image.Image, patch_size: int, stride: int) 
             box_list.append(box)
     num_patches = wid_num*hei_num
     print(f"\nImage has totolly {num_patches} patches...\nExtracting...\n")
-
+    img_list = []
     # Crop the image and yield
     for _, box in enumerate(box_list):
-        yield img_src.crop(box)
+        # yield img_src.crop(box)
+        img_list.append(img_src.crop(box))
+    return img_list
 
 def get_image_metadata(img_src: Image.Image, patch_size=256, stride=128) -> dict:
     # Correct the image size so that both width and height are divisible by patch_size
@@ -134,7 +137,7 @@ def run_inference(opt, dataset):
         print(f'Processing image {data["A_paths"]} ...')
         TIMESTAMP_seg_proc = time()
         seg_num = 0
-        for k, img_seg in enumerate(img_seg_iter):
+        for k, img_seg in tqdm(enumerate(img_seg_iter)):
             model.set_input(transform_img2tensor(img_seg)[None,:,:,:])  # unpack data from data loader
             # TIMESTAMP_single_inference = time()
             result_tensor = model.forward()
@@ -198,9 +201,19 @@ class imgDataset(Dataset):
     def __len__(self):
         return self.A_size
 
+class MultiprocessingSegmentInferenceOptions(TestOptions):
+    """This class includes mp-segment inference options.
+
+    It also includes shared options defined in TestOptions.
+    """
+
+    def initialize(self, parser):
+        parser = TestOptions.initialize(self, parser)  # define shared options
+        parser.add_argument('--num_procs', type=int, default=4, help='number of processes')
+        return parser
 
 if __name__ == '__main__':
-    opt = TestOptions().parse()  # get test options
+    opt = MultiprocessingSegmentInferenceOptions().parse()  # get test options
     # hard-code some parameters for test
     opt.num_threads = 0   # test code only supports num_threads = 0
     opt.batch_size = 1    # test code only supports batch_size = 1
@@ -223,7 +236,7 @@ if __name__ == '__main__':
         os.makedirs(result_dir)
 
     import multiprocessing as mp
-    nprocs = 1
+    nprocs = opt.num_procs
     dataset_parts = mp_datasets(opt, nprocs)  # create a dataset given opt.dataset_mode and other options
     mp.set_start_method('spawn') # torch multiprocessing acquirement
     pool=[]
