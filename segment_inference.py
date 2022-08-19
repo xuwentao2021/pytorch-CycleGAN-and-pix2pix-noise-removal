@@ -160,7 +160,7 @@ def mp_datasets(opt, nprocs):
     # if image exists in result dir, no need to process
     exists_img = os.listdir(result_dir)
     paths = sorted([os.path.join(dir_A,img_dir) for img_dir in os.listdir(dir_A) if not img_dir in exists_img])
-    print(paths)
+    print('Totally ',len(paths), ' images to be processed')
     dataset_size = len(paths)
 
     dataset_part_size = dataset_size // nprocs + 1
