@@ -120,7 +120,7 @@ def run_inference(opt, dataset):
 
     # create a result dir
     result_dir = os.path.join(opt.results_dir, opt.name) # ./results/moe_17_aug/
-    if not os.exists(result_dir):
+    if not os.path.exists(result_dir):
         os.makedirs(result_dir)
     # instantiate a Image.Image -> Tensor transform class
     transform_img2tensor = transforms.Compose([transforms.ToTensor(),transforms.Normalize((0.5,), (0.5,))])
@@ -156,7 +156,11 @@ def run_inference(opt, dataset):
 
 def mp_datasets(opt, nprocs):
     dir_A = os.path.join(opt.dataroot, opt.phase + 'A')
-    paths = sorted([os.path.join(dir_A,img_dir) for img_dir in os.listdir(dir_A)])
+    result_dir = os.path.join(opt.results_dir, opt.name)
+    # if image exists in result dir, no need to process
+    exists_img = os.listdir(result_dir)
+    paths = sorted([os.path.join(dir_A,img_dir) for img_dir in os.listdir(dir_A) if not img_dir in exists_img])
+    print(paths)
     dataset_size = len(paths)
 
     dataset_part_size = dataset_size // nprocs + 1
@@ -212,9 +216,16 @@ if __name__ == '__main__':
     # model.eval()
 
     ########################################################
+
+    # create a result dir
+    result_dir = os.path.join(opt.results_dir, opt.name) # ./results/moe_17_aug/
+    if not os.path.exists(result_dir):
+        os.makedirs(result_dir)
+
     import multiprocessing as mp
-    nprocs = 2
+    nprocs = 4
     dataset_parts = mp_datasets(opt, nprocs)  # create a dataset given opt.dataset_mode and other options
+    mp.set_start_method('spawn') # torch multiprocessing acquirement
     pool=[]
     for i, dataset in enumerate(dataset_parts):
         process = mp.Process(target=run_inference, args=(opt, DataLoader(dataset, opt.batch_size, False, num_workers=opt.num_threads)))
