@@ -7,5 +7,5 @@ TARGET_DIR=./checkpoints/deepmoe_cyclegan_inference_eg/
 pip install gdown
 gdown --id $ID -O $ZIP_FILE
 mkdir $TARGET_DIR
-unzip $ZIP_FILE -d ./checkpoints/
+unzip $ZIP_FILE -d $TARGET_DIR
 rm $ZIP_FILE
