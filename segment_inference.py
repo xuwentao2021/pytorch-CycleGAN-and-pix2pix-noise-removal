@@ -1,4 +1,7 @@
-"""General-purpose test script for image-to-image translation.
+"""Inference script for image-to-image translation with overlap-tile segmentation strategy
+This inference script is for big image that need to be segmented before processed by the model.
+
+Unlike the train.py and test.py, this script will not have the visualisation function.
 
 Once you have trained your model with train.py, you can use this script to test the model.
 It will load a saved model from '--checkpoints_dir' and save the results to '--results_dir'.
@@ -228,13 +231,13 @@ if __name__ == '__main__':
     # model.setup(opt)               # regular setup: load and print networks; create schedulers
     # model.eval()
 
-    ########################################################
 
     # create a result dir
-    result_dir = os.path.join(opt.results_dir, opt.name) # ./results/moe_17_aug/
+    result_dir = os.path.join(opt.results_dir, opt.name) # e.g. ./results/moe_17_aug/
     if not os.path.exists(result_dir):
         os.makedirs(result_dir)
 
+    # inference using multiprocessing
     import multiprocessing as mp
     nprocs = opt.num_procs
     dataset_parts = mp_datasets(opt, nprocs)  # create a dataset given opt.dataset_mode and other options
@@ -246,38 +249,3 @@ if __name__ == '__main__':
         pool.append(process)
     for p in pool:
         p.join()
-    ########################################################
-
-    # # create a result dir
-    # result_dir = os.path.join(opt.results_dir, opt.name) # ./results/moe_17_aug/
-    # # instantiate a Image.Image -> Tensor transform class
-    # transform_img2tensor = transforms.Compose([transforms.ToTensor(),transforms.Normalize((0.5,), (0.5,))])
-
-    # for i, data in enumerate(dataset): # each iter generate a full image. It need to be segmented.
-    #     TIMESTAMP_img_seg = time()
-    #     img = Image.open(data['A_paths'][0])
-    #     img_seg_iter = image_segment_extractor(img, opt.load_size, opt.stride)
-    #     metadata = get_image_metadata(img, opt.load_size, opt.stride)
-    #     prc_img_seg_list = []
-    #     print(f'Processing image {data["A_paths"]} ...')
-    #     TIMESTAMP_seg_proc = time()
-    #     seg_num = 0
-    #     for k, img_seg in enumerate(img_seg_iter):
-    #         model.set_input(transform_img2tensor(img_seg)[None,:,:,:])  # unpack data from data loader
-    #         TIMESTAMP_single_inference = time()
-    #         result_tensor = model.forward()
-    #         print('Single image segment inference time', time()-TIMESTAMP_single_inference)
-    #         result_img_seg = tensor2im(result_tensor)
-    #         prc_img_seg_list.append(result_img_seg) # run inference
-    #         seg_num += 1
-    #     TIMESTAMP_img_rebuild = time()
-        
-    #     result_img = rebuild_image(prc_img_seg_list, **metadata)
-    #     result_path = os.path.join(result_dir, os.path.split(data['A_paths'][0])[-1])
-    #     result_img.convert('L').save(result_path)
-    #     TIMESTAMP_END = time()
-    #     print(f'Successfully process the image\
-    #         \nSegmentation step {TIMESTAMP_seg_proc-TIMESTAMP_img_seg:.4f}\
-    #         \nModel inference time {TIMESTAMP_img_rebuild-TIMESTAMP_seg_proc:.4f}\
-    #         \nPer seg inference {(TIMESTAMP_img_rebuild-TIMESTAMP_seg_proc)/seg_num:.4f}\
-    #         \nImage rebuild time {TIMESTAMP_END-TIMESTAMP_img_rebuild:.4f}')

@@ -7,17 +7,26 @@ from . import networks
 
 class MoECycleGANModel(BaseModel):
     """
-    This class implements the CycleGAN model, for learning image-to-image translation without paired data.
+    This class implements the deepMoEs-CycleGAN model, for learning noise-to-clean denoising model without paired data.
+    The deep mixture of experts (deepMoEs) architecture allows the model to remove multiple types of noise.
 
     The model training requires '--dataset_mode unaligned' dataset.
     By default, it uses a '--netG resnet_9blocks' ResNet generator,
     a '--netD basic' discriminator (PatchGAN introduced by pix2pix),
     and a least-square GANs objective ('--gan_mode lsgan').
 
+    The networks are defined in networks.py scritpt. 
+    For deepMoEs-cycleGAN, I implement GatingResnetBlockGenerator, EmbeddingNetworkGenerator, GatingResnetBlock, MoEGatingNetwork, ClassifierC, and MoEEmbedder in networks script.
+    All my implementation are based on the original cycleGAN networks' modules. Some of the comments therein have not been modified and may cause some confusion.
+
     CycleGAN paper: https://arxiv.org/pdf/1703.10593.pdf
+    deepMoEs-cycleGAN paper: https://openaccess.thecvf.com/content/ICCV2021/html/Gangeh_End-to-End_Unsupervised_Document_Image_Blind_Denoising_ICCV_2021_paper.html
+    deep Mixture-of-Experts paper: https://proceedings.mlr.press/v115/wang20d.html
+
     """
     @staticmethod
     def modify_commandline_options(parser, is_train=True):
+        # COPY FROM cycle_gan_model.py WITH modification
         """Add new dataset-specific options, and rewrite default values for existing options.
 
         Parameters:
@@ -34,12 +43,13 @@ class MoECycleGANModel(BaseModel):
         Forward cycle loss:  lambda_A * ||G_B(G_A(A)) - A|| (Eqn. (2) in the paper)
         Backward cycle loss: lambda_B * ||G_A(G_B(B)) - B|| (Eqn. (2) in the paper)
 
+        For deepMoEs-cycleGAN, in addition to cycleGAN losses, we introduce lambda_G_H, lambda_G_F, for the following losses
         Forward gating network loss: lambda_G_H * \sum{||G_H^i(Emb(A))||_1}
         Backword gating network loss: lambda_G_F * \sum{||G_F^i(Emb(A))||_1}
         ClassifierC loss: CE(C(Emb(A)), c_A)
         MoE total loss: ClassifierC loss + lambda_G_H * G_H_loss + lambda_G_F * G_F_loss
 
-        Identity loss (optional): lambda_identity * (||G_A(B) - B|| * lambda_B + ||G_B(A) - A|| * lambda_A) (Sec 5.2 "Photo generation from paintings" in the paper)
+        Identity loss (optional): lambda_identity * (||G_A(B) - B|| * lambda_B + ||G_B(A) - A|| * lambda_A) (Sec 5.2 "Photo generation from paintings" in the cycleGAN paper)
         Dropout is not used in the original CycleGAN paper.
         """
         parser.set_defaults(no_dropout=True)  # default CycleGAN did not use dropout
@@ -57,7 +67,7 @@ class MoECycleGANModel(BaseModel):
         return parser
 
     def __init__(self, opt):
-        """Initialize the CycleGAN class.
+        """Initialize the deepMoEs-CycleGAN class.
 
         Parameters:
             opt (Option class)-- stores all the experiment flags; needs to be a subclass of BaseOptions
@@ -68,9 +78,9 @@ class MoECycleGANModel(BaseModel):
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         visual_names_A = ['real_A', 'fake_B', 'rec_A']
         visual_names_B = ['real_B', 'fake_A', 'rec_B']
-        # if self.isTrain and self.opt.lambda_identity > 0.0:  # if identity loss is used, we also visualize idt_B=G_A(B) ad idt_A=G_A(B)
-        #     visual_names_A.append('idt_B')
-        #     visual_names_B.append('idt_A')
+        if self.isTrain and self.opt.lambda_identity > 0.0:  # if identity loss is used, we also visualize idt_B=G_A(B) ad idt_A=G_A(B)
+            visual_names_A.append('idt_B')
+            visual_names_B.append('idt_A')
 
         self.visual_names = visual_names_A + visual_names_B  # combine visualizations for A and B
         # specify the models you want to save to the disk. The training/test scripts will call <BaseModel.save_networks> and <BaseModel.load_networks>.
@@ -88,7 +98,7 @@ class MoECycleGANModel(BaseModel):
                                         not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
         self.netEmb = networks.define_Emb(opt.input_nc, opt.emb_inner_features, 7, 
                                         opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
-        self.netC = networks.define_C(opt.noise_type, opt.init_type, opt.init_gain, self.gpu_ids) #### how to pass # of noise type
+        self.netC = networks.define_C(opt.noise_type, opt.init_type, opt.init_gain, self.gpu_ids) # noise_type: number of noise types, in the example -> 3
 
         if self.isTrain:  # define discriminators
             self.netD_A = networks.define_D(opt.output_nc, opt.ndf, opt.netD,
@@ -105,16 +115,15 @@ class MoECycleGANModel(BaseModel):
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)  # define GAN loss.
             self.criterionCycle = torch.nn.L1Loss()
             self.criterionIdt = torch.nn.L1Loss()
+            # 
             self.criterionEmbCls = torch.nn.CrossEntropyLoss()
 
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
             # itertools.chain() can cascade multiple objects to obtain a larger iterator
             self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters(),self.netC.parameters(), self.netEmb.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.Adam(itertools.chain(self.netD_A.parameters(), self.netD_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
-            # self.optimizer_C = torch.optim.Adam(itertools.chain(self.netC.parameters(), self.netEmb.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
-            # self.optimizers.append(self.optimizer_C)
 
     def set_input(self, input):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
@@ -128,6 +137,8 @@ class MoECycleGANModel(BaseModel):
         self.real_A = input['A' if AtoB else 'B'].to(self.device)
         self.real_B = input['B' if AtoB else 'A'].to(self.device)
         self.image_paths = input['A_paths' if AtoB else 'B_paths']
+
+        # get noise type
         # self.flag_A = input['A_flags'].to(self.device)
         self.real_C = self.flag_A = input['A_flags'].to(self.device)
 
@@ -249,16 +260,11 @@ class MoECycleGANModel(BaseModel):
 
 
     def optimize_parameters(self, epoch):
-        """Calculate losses, gradients, and update network weights; called in every training iteration"""
-        # if epoch < self.opt.embedding_epochs:
-        #     self.forward_cls()
-        #     # Emb - C
-        #     self.set_requires_grad([self.netC, self.netEmb], True)
-        #     self.optimizer_C.zero_grad()
-        #     self.backward_C()
-        #     self.optimizer_C.step()
-        # else:
-            # forward
+        """Calculate losses, gradients, and update network weights; called in every training iteration
+        epoch is for adjust training strategy, see Wentao XU's thesis - section 4.4.6
+        After 15 epoch, the embedding network will not be trained further.
+        """
+
         self.forward()      # compute fake images and reconstruction images.
         # G_A and G_B
         self.set_requires_grad([self.netD_A, self.netD_B], False)  # Ds require no gradients when optimizing Gs

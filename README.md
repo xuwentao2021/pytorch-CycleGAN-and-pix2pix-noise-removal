@@ -5,6 +5,16 @@
 
 # CycleGAN and pix2pix in PyTorch
 
+## *WENTAO XU's thesis Notebook*
+Check out the [Jupyter Notebook](./summerProject.ipynb).
+I have implemented the deepMoEs-cycleGAN proposed by [Gangeh et al.](https://openaccess.thecvf.com/content/ICCV2021/html/Gangeh_End-to-End_Unsupervised_Document_Image_Blind_Denoising_ICCV_2021_paper.html) based on this repository.
+
+> The model need at least 16 GB for training. As for inference phase, I can run the code in my laptop with 4 GB Nvidia 1050Ti.
+
+## Introduction
+
+
+
 **New**:  Please check out [contrastive-unpaired-translation](https://github.com/taesungp/contrastive-unpaired-translation) (CUT), our new unpaired image-to-image translation model that enables fast and memory-efficient training.
 
 We provide PyTorch implementations for both unpaired and paired image-to-image translation.

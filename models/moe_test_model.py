@@ -40,16 +40,24 @@ class MoETestModel(BaseModel):
         self.loss_names = []
         # specify the images you want to save/display. The training/test scripts  will call <BaseModel.get_current_visuals>
         self.visual_names = ['real', 'fake']
-        # specify the models you want to save to the disk. The training/test scripts will call <BaseModel.save_networks> and <BaseModel.load_networks>
-        self.model_names = ['Emb', 'G' + opt.model_suffix]  # A generator and embedding network are needed.
-        self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG,
-                                      opt.norm, not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
-        self.netEmb = networks.define_Emb(opt.input_nc, 64, 7, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
+
+        if opt.netG == 'moe_resnet_9blocks':
+            # specify the models you want to save to the disk. The training/test scripts will call <BaseModel.save_networks> and <BaseModel.load_networks>
+            self.model_names = ['Emb', 'G' + opt.model_suffix]  # A generator and embedding network are needed.
+            self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG,
+                                        opt.norm, not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
+            self.netEmb = networks.define_Emb(opt.input_nc, 64, 7, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
+        else:
+            self.model_names = ['G' + opt.model_suffix]  # A generator and embedding network are needed.
+            self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG,
+                            opt.norm, not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
 
         # assigns the model to self.netG_[suffix] so that it can be loaded
         # please see <BaseModel.load_networks>
 
         setattr(self, 'netG' + opt.model_suffix, self.netG)  # store netG in self.
+
+        self.netG_type = opt.netG
 
 
     def set_input(self, input):
@@ -63,11 +71,19 @@ class MoETestModel(BaseModel):
         self.real = input.to(self.device)
 
     def forward(self):
-        """Run forward pass."""
-        self.emb = self.netEmb(self.real)
-        # self.fake = self.netG(self.real)  # G(real)
-        self.fake = self.netG_A(self.real, self.emb, False)
-        return self.fake # make the inference easier, directly return the result Tensor
+        """Run forward pass.
+        if netG is normal ResNet9blocks: self.netG_A(self.real)
+        elif netG is moe ResNet9blocks: self.netG_A(self.real, self.emb, False)"""
+
+        if self.netG_type == 'resnet_9blocks':
+            self.fake = self.netG(self.real)
+        elif self.netG_type == 'moe_resnet_9blocks':
+            self.emb = self.netEmb(self.real)
+            # self.fake = self.netG(self.real)  # G(real)
+            self.fake = self.netG_A(self.real, self.emb, False)
+        else:
+            raise NotImplementedError(f'NOT supported netG type: {self.netG_type}')
+        return self.fake # make the inference easier, directly return the result Tensor. No visualisation
 
     def optimize_parameters(self):
         """No optimization for test model."""
